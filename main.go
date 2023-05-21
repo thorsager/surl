@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -11,35 +10,53 @@ import (
 	"net/http/httputil"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/spf13/pflag"
 )
 
 var version = "*unset*"
 
 func main() {
-	port := flag.Uint("port", 8080, "listen on port")
-	addr := flag.String("addr", "0.0.0.0", "lisen on address")
-	dumpRequest := flag.Bool("dump", false, "dump client request")
-	dumpBody := flag.Bool("dump-body", false, "dump client request body")
-	statusCode := flag.Uint("status", 200, "return status code")
-	responseHeader := flag.String("h", "", "add HTTP response header")
-	responseBody := flag.String("b", "", "add HTTP response body")
-	exitAfter := flag.Uint("c", 0, "exit after number of requests (0 keep running)")
-	flag.Parse()
+	var responseCount uint = 0
+	var responseHeaders []string
 
-	srv := http.Server{Addr: fmt.Sprintf("%s:%d", *addr, *port)}
-	description := fmt.Sprintf("surl/%s",version)
+	dumpRequest := pflag.Bool("dump", false, "dump client request")
+	dumpBody := pflag.Bool("dump-body", false, "dump client request body")
+	statusCode := pflag.UintP("status", "s", 200, "return status code")
+	pflag.StringArrayVarP(&responseHeaders, "header", "H", []string{}, "HTTP response header")
+	responseBody := pflag.StringP("data", "d", "", "add HTTP response body")
+	exitAfter := pflag.UintP("count", "c", 0, "exit after number of requests (0 keep running)")
+
+	pflag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options...] <addr>\n%s",
+			filepath.Base(os.Args[0]),
+			pflag.CommandLine.FlagUsages(),
+		)
+	}
+
+	pflag.Parse()
+
+	addr,err := parseAddr()
+	if err != nil  {
+		fmt.Fprintf(os.Stderr,"%s\n",err)
+		pflag.Usage()
+		os.Exit(1)
+	}
+	
+	srv := http.Server{Addr: addr}
+	description := fmt.Sprintf("surl/%s", version)
 
 	sigChan := make(chan os.Signal, 1)
 
-	var responseCount uint = 0
-
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		responseCount += 1
-		w.Header().Add("Server",description)
+
 		if *dumpRequest || *dumpBody {
 			dump, err := httputil.DumpRequest(r, *dumpBody)
 			if err != nil {
@@ -48,11 +65,19 @@ func main() {
 			}
 			log.Printf("\n--\n%q\n--\n", dump)
 		}
+
+		if len(responseHeaders) != 0 {
+			for _, hdr := range responseHeaders {
+				addRawHeader(w.Header(), hdr)
+			}
+		}
+
+		if w.Header().Get("Server") == "" {
+			w.Header().Add("Server", description)
+		}
+
 		w.WriteHeader(int(*statusCode))
 
-		if *responseHeader != "" {
-			addRawHeader(w.Header(), *responseHeader)
-		}
 		if *responseBody != "" {
 			if strings.HasPrefix(*responseBody, "@") {
 				// response is filename
@@ -73,7 +98,7 @@ func main() {
 
 	})
 
-	log.Printf("starting %s on %s:%d %s", description,*addr, *port, desc(*exitAfter))
+	log.Printf("starting %s on %s %s", description, addr, desc(*exitAfter))
 	// http.ListenAndServe(fmt.Sprintf("%s:%d", *addr, *port), nil)
 
 	go func() {
@@ -86,15 +111,36 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-
 	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownRelease()
 
-	log.Printf("shutting down after %d responses",responseCount)
-	err := srv.Shutdown(shutdownCtx)
+	log.Printf("shutting down after %d responses", responseCount)
+	err = srv.Shutdown(shutdownCtx)
 	if err != nil {
 		log.Fatalf("shutdown error: %v", err)
 	}
+}
+
+func validAddr(s string) error {
+	p := strings.SplitN(s,":",2)
+	if p == nil || len(p) != 2 {
+		return fmt.Errorf("invalid format ([host]:<port>)")
+	}
+	if _,err := strconv.Atoi(p[1]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseAddr() (string,error) {
+	if pflag.NArg() != 1 {
+		return "", fmt.Errorf("requred: 'addr'")
+	}
+	addr := pflag.Arg(0)
+	if err := validAddr(addr); err != nil {
+		return "",fmt.Errorf("invalid addr: %s (%s)\n",addr,err)
+	}
+	return addr,nil
 }
 
 func desc(c uint) string {

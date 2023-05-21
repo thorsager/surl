@@ -1,5 +1,5 @@
-version=v0.0.1
 binary=bin/surl
+version=$(shell git describe --tags --always --dirty)
 
 .PHONY: surl
 surl:

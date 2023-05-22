@@ -3,7 +3,7 @@ version=$(shell git describe --tags --always --dirty)
 
 .PHONY: surl
 surl:
-	go build --ldflags='-X main.version=$(version)' -o $(binary) .
+	go build -v -a -tags netgo --ldflags='-X main.version=$(version)' -o $(binary) ./...
 
 .PHONY: url
 clean:

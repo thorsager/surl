@@ -8,8 +8,6 @@ on:
 jobs:
   publish-docker-image:
     runs-on: ubuntu-latest
-      permissions:
-        packages: write
 
     env:
       IMAGE_NAME: ghcr.io/thorsager/surl

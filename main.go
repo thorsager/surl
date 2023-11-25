@@ -20,21 +20,32 @@ import (
 	"github.com/spf13/pflag"
 )
 
-var version = "*unset*"
+var (
+	version             = "*unset*"
+	versionFlag         bool
+	dumpRequestFlag     bool
+	dumpBodyFlag        bool
+	statusCodeFlag      uint
+	responseHeadersFlag []string
+	responseBodyFlag    string
+	exitAfterFlag       uint
+	certFileFlag        string
+	keyFileFlag         string
+
+	responseCount uint = 0
+)
 
 func main() {
-	var responseCount uint = 0
-	var responseHeaders []string
 
-	versionFlag := pflag.Bool("version", false, "show version")
-	dumpRequest := pflag.Bool("dump", false, "dump client request")
-	dumpBody := pflag.Bool("dump-body", false, "dump client request body")
-	statusCode := pflag.UintP("status", "s", 200, "return status code")
-	pflag.StringArrayVarP(&responseHeaders, "header", "H", []string{}, "HTTP response header")
-	responseBody := pflag.StringP("data", "d", "", "add HTTP response body")
-	exitAfter := pflag.UintP("count", "c", 0, "exit after number of requests (0 keep running)")
-	certFile := pflag.String("cert", "", "TLS certificate file")
-	keyFile := pflag.String("key", "", "TLS certificate key-file")
+	pflag.BoolVar(&versionFlag, "version", false, "show version")
+	pflag.BoolVar(&dumpRequestFlag, "dump", false, "dump client request")
+	pflag.BoolVar(&dumpBodyFlag, "dump-body", false, "dump client request body")
+	pflag.UintVarP(&statusCodeFlag, "status", "s", 200, "return status code")
+	pflag.StringArrayVarP(&responseHeadersFlag, "header", "H", []string{}, "HTTP response header")
+	pflag.StringVarP(&responseBodyFlag, "data", "d", "", "add HTTP response body")
+	pflag.UintVarP(&exitAfterFlag, "count", "c", 0, "exit after number of requests (0 keep running)")
+	pflag.StringVar(&certFileFlag, "cert", "", "TLS certificate file")
+	pflag.StringVar(&keyFileFlag, "key", "", "TLS certificate key-file")
 
 	pflag.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [options...] <addr>\n%s", filepath.Base(os.Args[0]),
@@ -44,7 +55,7 @@ func main() {
 
 	pflag.Parse()
 
-	if *versionFlag {
+	if versionFlag {
 		fmt.Printf("surl %s\n", version)
 		os.Exit(0)
 	}
@@ -66,8 +77,8 @@ func main() {
 
 		log.Printf("request: %s %s %s", r.RemoteAddr, r.Method, r.URL)
 
-		if *dumpRequest || *dumpBody {
-			dump, err := httputil.DumpRequest(r, *dumpBody)
+		if dumpRequestFlag || dumpBodyFlag {
+			dump, err := httputil.DumpRequest(r, dumpBodyFlag)
 			if err != nil {
 				log.Printf("error: unable to dump client request: %s", err)
 				return
@@ -75,8 +86,8 @@ func main() {
 			log.Printf("\n--\n%q\n--\n", dump)
 		}
 
-		if len(responseHeaders) != 0 {
-			for _, hdr := range responseHeaders {
+		if len(responseHeadersFlag) != 0 {
+			for _, hdr := range responseHeadersFlag {
 				if err := addRawHeader(w.Header(), hdr); err != nil {
 					log.Printf("error: unable to add response header: %s", err)
 				}
@@ -87,12 +98,12 @@ func main() {
 			w.Header().Add("Server", description)
 		}
 
-		w.WriteHeader(int(*statusCode))
+		w.WriteHeader(int(statusCodeFlag))
 
-		if *responseBody != "" {
-			if strings.HasPrefix(*responseBody, "@") {
+		if responseBodyFlag != "" {
+			if strings.HasPrefix(responseBodyFlag, "@") {
 				// response is filename
-				filename := trimFirst(*responseBody)
+				filename := trimFirst(responseBodyFlag)
 				file, err := os.Open(filename)
 				if err != nil {
 					log.Printf("error: unable to open file: '%s'", filename)
@@ -103,12 +114,12 @@ func main() {
 					log.Printf("error: unable to write response body: %s", err)
 				}
 			} else {
-				if _, err := w.Write([]byte(*responseBody)); err != nil {
+				if _, err := w.Write([]byte(responseBodyFlag)); err != nil {
 					log.Printf("error: unable to write response body: %s", err)
 				}
 			}
 		}
-		if *exitAfter != 0 && *exitAfter == responseCount {
+		if exitAfterFlag != 0 && exitAfterFlag == responseCount {
 			log.Printf("response count of %d reached, shutting down", responseCount)
 			sigChan <- os.Interrupt
 		}
@@ -116,14 +127,14 @@ func main() {
 	})
 
 	go func() {
-		if *certFile != "" && *keyFile != "" {
-			log.Printf("starting %s on %s %s", description, addr, desc(*exitAfter))
-			if err := srv.ListenAndServeTLS(*certFile, *keyFile); !errors.Is(err, http.ErrServerClosed) {
+		if certFileFlag != "" && keyFileFlag != "" {
+			log.Printf("starting %s on %s %s", description, addr, desc(exitAfterFlag))
+			if err := srv.ListenAndServeTLS(certFileFlag, keyFileFlag); !errors.Is(err, http.ErrServerClosed) {
 				log.Fatalf("startup error: %v", err)
 			}
 			return
 		}
-		log.Printf("starting %s on %s %s", description, addr, desc(*exitAfter))
+		log.Printf("starting %s on %s %s", description, addr, desc(exitAfterFlag))
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("startup error: %v", err)
 		}
@@ -136,7 +147,7 @@ func main() {
 	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownRelease()
 
-	if *exitAfter != responseCount {
+	if exitAfterFlag != responseCount {
 		log.Printf("shutting down after %d responses", responseCount)
 	}
 	err = srv.Shutdown(shutdownCtx)

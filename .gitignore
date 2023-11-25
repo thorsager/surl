@@ -1,4 +1,11 @@
 .DS_Store
 **/*~
 .env
+.idea
 bin/
+
+# Ignore Certificates
+*.crt
+*.pem
+*.key
+*.csr

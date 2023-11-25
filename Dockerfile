@@ -10,7 +10,7 @@ ADD . /build
 RUN CGO_ENABLED=0 GOOS=linux make
 
 FROM alpine:3
-LABEL org.opencontainers.image.source=https://github.com/thorsager/gollo
+LABEL org.opencontainers.image.source=https://github.com/thorsager/surl
 WORKDIR /
 
 COPY --from=build /build/bin/surl /

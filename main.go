@@ -26,29 +26,36 @@ func main() {
 	var responseCount uint = 0
 	var responseHeaders []string
 
+	versionFlag := pflag.Bool("version", false, "show version")
 	dumpRequest := pflag.Bool("dump", false, "dump client request")
 	dumpBody := pflag.Bool("dump-body", false, "dump client request body")
 	statusCode := pflag.UintP("status", "s", 200, "return status code")
 	pflag.StringArrayVarP(&responseHeaders, "header", "H", []string{}, "HTTP response header")
 	responseBody := pflag.StringP("data", "d", "", "add HTTP response body")
 	exitAfter := pflag.UintP("count", "c", 0, "exit after number of requests (0 keep running)")
+	certFile := pflag.String("cert", "", "TLS certificate file")
+	keyFile := pflag.String("key", "", "TLS certificate key-file")
 
 	pflag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options...] <addr>\n%s",
-			filepath.Base(os.Args[0]),
+		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [options...] <addr>\n%s", filepath.Base(os.Args[0]),
 			pflag.CommandLine.FlagUsages(),
 		)
 	}
 
 	pflag.Parse()
 
-	addr,err := parseAddr()
-	if err != nil  {
-		fmt.Fprintf(os.Stderr,"%s\n",err)
+	if *versionFlag {
+		fmt.Printf("surl %s\n", version)
+		os.Exit(0)
+	}
+
+	addr, err := parseAddr()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "%s\n", err)
 		pflag.Usage()
 		os.Exit(1)
 	}
-	
+
 	srv := http.Server{Addr: addr}
 	description := fmt.Sprintf("surl/%s", version)
 
@@ -56,6 +63,8 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		responseCount += 1
+
+		log.Printf("request: %s %s %s", r.RemoteAddr, r.Method, r.URL)
 
 		if *dumpRequest || *dumpBody {
 			dump, err := httputil.DumpRequest(r, *dumpBody)
@@ -68,7 +77,9 @@ func main() {
 
 		if len(responseHeaders) != 0 {
 			for _, hdr := range responseHeaders {
-				addRawHeader(w.Header(), hdr)
+				if err := addRawHeader(w.Header(), hdr); err != nil {
+					log.Printf("error: unable to add response header: %s", err)
+				}
 			}
 		}
 
@@ -83,25 +94,36 @@ func main() {
 				// response is filename
 				filename := trimFirst(*responseBody)
 				file, err := os.Open(filename)
-				defer file.Close()
 				if err != nil {
 					log.Printf("error: unable to open file: '%s'", filename)
+					return
 				}
-				io.Copy(w, file)
+				defer quietClose(file)
+				if _, err = io.Copy(w, file); err != nil {
+					log.Printf("error: unable to write response body: %s", err)
+				}
 			} else {
-				w.Write([]byte(*responseBody))
+				if _, err := w.Write([]byte(*responseBody)); err != nil {
+					log.Printf("error: unable to write response body: %s", err)
+				}
 			}
 		}
 		if *exitAfter != 0 && *exitAfter == responseCount {
+			log.Printf("response count of %d reached, shutting down", responseCount)
 			sigChan <- os.Interrupt
 		}
 
 	})
 
-	log.Printf("starting %s on %s %s", description, addr, desc(*exitAfter))
-	// http.ListenAndServe(fmt.Sprintf("%s:%d", *addr, *port), nil)
-
 	go func() {
+		if *certFile != "" && *keyFile != "" {
+			log.Printf("starting %s on %s %s", description, addr, desc(*exitAfter))
+			if err := srv.ListenAndServeTLS(*certFile, *keyFile); !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("startup error: %v", err)
+			}
+			return
+		}
+		log.Printf("starting %s on %s %s", description, addr, desc(*exitAfter))
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("startup error: %v", err)
 		}
@@ -114,7 +136,9 @@ func main() {
 	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownRelease()
 
-	log.Printf("shutting down after %d responses", responseCount)
+	if *exitAfter != responseCount {
+		log.Printf("shutting down after %d responses", responseCount)
+	}
 	err = srv.Shutdown(shutdownCtx)
 	if err != nil {
 		log.Fatalf("shutdown error: %v", err)
@@ -122,25 +146,25 @@ func main() {
 }
 
 func validAddr(s string) error {
-	p := strings.SplitN(s,":",2)
+	p := strings.SplitN(s, ":", 2)
 	if p == nil || len(p) != 2 {
 		return fmt.Errorf("invalid format ([host]:<port>)")
 	}
-	if _,err := strconv.Atoi(p[1]); err != nil {
+	if _, err := strconv.Atoi(p[1]); err != nil {
 		return err
 	}
 	return nil
 }
 
-func parseAddr() (string,error) {
+func parseAddr() (string, error) {
 	if pflag.NArg() != 1 {
 		return "", fmt.Errorf("requred: 'addr'")
 	}
 	addr := pflag.Arg(0)
 	if err := validAddr(addr); err != nil {
-		return "",fmt.Errorf("invalid addr: %s (%s)\n",addr,err)
+		return "", fmt.Errorf("invalid addr: %s (%s)\n", addr, err)
 	}
-	return addr,nil
+	return addr, nil
 }
 
 func desc(c uint) string {
@@ -155,11 +179,25 @@ func trimFirst(s string) string {
 	return s[i:]
 }
 
-func addRawHeader(headers http.Header, rawHeader string) error {
-	kv := strings.SplitN(rawHeader, ":", 2)
+func splitToKeyValue(s string, sep string) (string, string, error) {
+	kv := strings.SplitN(s, sep, 2)
 	if len(kv) != 2 {
-		return fmt.Errorf("invalid http header: '%s'", rawHeader)
+		return "", "", fmt.Errorf("invalid key%svalue format: '%s'", sep, s)
 	}
-	headers.Add(kv[0], kv[1])
+	return kv[0], kv[1], nil
+}
+
+func addRawHeader(headers http.Header, rawHeader string) error {
+	name, value, err := splitToKeyValue(rawHeader, ":")
+	if err != nil {
+		return fmt.Errorf("invalid http header: '%w'", err)
+	}
+	headers.Add(name, value)
 	return nil
+}
+
+func quietClose(c io.Closer) {
+	if err := c.Close(); err != nil {
+		log.Printf("error: unable to close: %s", err)
+	}
 }

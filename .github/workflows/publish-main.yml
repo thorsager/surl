@@ -9,11 +9,10 @@ jobs:
   publish-docker-image:
     runs-on: ubuntu-latest
     env:
-      PAT: ${{ secrets.PAT }}
       IMAGE_NAME: ghcr.io/thorsager/surl
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
@@ -23,7 +22,7 @@ jobs:
           echo ::set-output name=tags::${IMAGE_NAME}:latest
 
       - name: Cache Docker layers
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}

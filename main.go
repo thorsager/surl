@@ -47,7 +47,7 @@ func main() {
 	pflag.StringVarP(&responseBodyFlag, "data", "d", "", "add HTTP response body")
 	pflag.UintVarP(&exitAfterFlag, "count", "c", 0, "exit after number of requests (0 keep running)")
 	pflag.StringVar(&certFileFlag, "cert", "", "TLS certificate file")
-	pflag.StringVarP(&userFlag, "user", "u", "", "user credentials '<user:passwword>' for Basic Auth")
+	pflag.StringVarP(&userFlag, "user", "u", "", "user credentials '<user:password>' for Basic Auth")
 
 	pflag.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [options...] <addr>\n%s", filepath.Base(os.Args[0]),

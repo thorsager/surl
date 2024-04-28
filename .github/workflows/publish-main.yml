@@ -13,17 +13,17 @@ jobs:
       IMAGE_NAME: ghcr.io/thorsager/surl
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Prepare
         id: prep
         run: |
-          echo ::set-output name=tags::${IMAGE_NAME}:latest
+          echo "tags=${IMAGE_NAME}:latest" >> $GITHUB_OUTPUT
 
       - name: Cache Docker layers
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}

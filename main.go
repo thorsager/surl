@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ var (
 	exitAfterFlag       uint
 	certFileFlag        string
 	keyFileFlag         string
+	userFlag            string
 
 	responseCount uint = 0
 )
@@ -45,7 +47,7 @@ func main() {
 	pflag.StringVarP(&responseBodyFlag, "data", "d", "", "add HTTP response body")
 	pflag.UintVarP(&exitAfterFlag, "count", "c", 0, "exit after number of requests (0 keep running)")
 	pflag.StringVar(&certFileFlag, "cert", "", "TLS certificate file")
-	pflag.StringVar(&keyFileFlag, "key", "", "TLS certificate key-file")
+	pflag.StringVarP(&userFlag, "user", "u", "", "user credentials '<user:passwword>' for Basic Auth")
 
 	pflag.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [options...] <addr>\n%s", filepath.Base(os.Args[0]),
@@ -73,6 +75,15 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if userFlag != "" {
+			if !validateBasicAuth(r, userFlag) {
+				w.Header().Add("WWW-Authenticate", "Basic realm=\"Auth Required\"")
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+		}
+
 		responseCount += 1
 
 		log.Printf("request: %s %s %s", r.RemoteAddr, r.Method, r.URL)
@@ -119,6 +130,7 @@ func main() {
 				}
 			}
 		}
+
 		if exitAfterFlag != 0 && exitAfterFlag == responseCount {
 			log.Printf("response count of %d reached, shutting down", responseCount)
 			sigChan <- os.Interrupt
@@ -165,6 +177,18 @@ func validAddr(s string) error {
 		return err
 	}
 	return nil
+}
+
+func validateBasicAuth(r *http.Request, up string) bool {
+	ah := r.Header.Get("Authorization")
+	if ah == "" || !strings.HasPrefix(ah, "Basic ") {
+		return false
+	}
+	ah = strings.TrimPrefix(ah, "Basic ")
+	if clear, err := base64.StdEncoding.DecodeString(ah); err != nil || string(clear) != up {
+		return false
+	}
+	return true
 }
 
 func parseAddr() (string, error) {

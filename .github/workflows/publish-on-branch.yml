@@ -21,10 +21,10 @@ jobs:
       - name: Prepare
         id: prep
         run: |
-          echo ::set-output name=tags::${IMAGE_NAME}:${GITHUB_REF##*/}
+          echo "tags=${IMAGE_NAME}:${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
 
       - name: Cache Docker layers
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}

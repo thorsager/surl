@@ -109,18 +109,6 @@ func main() {
 			w.Header().Add("Server", description)
 		}
 
-		if responseBodyFlag != "" && strings.HasPrefix(responseBodyFlag, "@") {
-			filename := trimFirst(responseBodyFlag)
-			s, err := os.Stat(filename)
-			if err != nil {
-				log.Printf("error: unable to stat file: '%s'", filename)
-				return
-			}
-			if w.Header().Get("Content-Length") == "" {
-				w.Header().Add("Content-Length", strconv.Itoa(int(s.Size())))
-			}
-		}
-
 		if responseBodyFlag != "" {
 			if strings.HasPrefix(responseBodyFlag, "@") {
 				// response is filename
@@ -149,6 +137,8 @@ func main() {
 					log.Printf("error: unable to write response body: %s", err)
 				}
 			}
+		} else {
+			w.WriteHeader(int(statusCodeFlag))
 		}
 
 		if exitAfterFlag != 0 && exitAfterFlag == responseCount {

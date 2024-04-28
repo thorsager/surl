@@ -109,26 +109,36 @@ func main() {
 			w.Header().Add("Server", description)
 		}
 
-		w.WriteHeader(int(statusCodeFlag))
-
 		if responseBodyFlag != "" {
 			if strings.HasPrefix(responseBodyFlag, "@") {
 				// response is filename
 				filename := trimFirst(responseBodyFlag)
+				s, err := os.Stat(filename)
+				if err != nil {
+					log.Printf("error: unable to stat file: '%s'", filename)
+					return
+				}
 				file, err := os.Open(filename)
 				if err != nil {
 					log.Printf("error: unable to open file: '%s'", filename)
 					return
 				}
 				defer quietClose(file)
+				if w.Header().Get("Content-Length") == "" {
+					w.Header().Add("Content-Length", strconv.Itoa(int(s.Size())))
+				}
+				w.WriteHeader(int(statusCodeFlag)) // start sending body
 				if _, err = io.Copy(w, file); err != nil {
 					log.Printf("error: unable to write response body: %s", err)
 				}
 			} else {
+				w.WriteHeader(int(statusCodeFlag)) // start sending body
 				if _, err := w.Write([]byte(responseBodyFlag)); err != nil {
 					log.Printf("error: unable to write response body: %s", err)
 				}
 			}
+		} else {
+			w.WriteHeader(int(statusCodeFlag))
 		}
 
 		if exitAfterFlag != 0 && exitAfterFlag == responseCount {

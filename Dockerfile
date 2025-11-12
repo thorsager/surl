@@ -1,4 +1,4 @@
-FROM golang:1-alpine as build
+FROM golang:1-alpine AS build
 RUN apk add --update --no-cache make git
 RUN mkdir /build
 WORKDIR /build

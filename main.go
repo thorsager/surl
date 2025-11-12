@@ -313,15 +313,6 @@ func validateBasicAuth(r *http.Request, up string) bool {
 		return up == user+":"+pass
 	}
 	return false
-	// ah := r.Header.Get("Authorization")
-	// if ah == "" || !strings.HasPrefix(ah, "Basic ") {
-	// 	return false
-	// }
-	// ah = strings.TrimPrefix(ah, "Basic ")
-	// if clear, err := base64.StdEncoding.DecodeString(ah); err != nil || string(clear) != up {
-	// 	return false
-	// }
-	// return true
 }
 
 func parseAddr() (string, error) {

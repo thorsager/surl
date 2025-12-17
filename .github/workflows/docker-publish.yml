@@ -97,6 +97,7 @@ jobs:
           ignore-unfixed: false
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+          trivy-config: 'trivy.yaml'
 
       - name: Run Trivy vulnerability scanner (SARIF)
         if: ${{ github.event_name == 'pull_request' }}
@@ -106,6 +107,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
+          trivy-config: 'trivy.yaml'
 
       - name: Upload Trivy results to GitHub Security tab
         if: ${{ github.event_name == 'pull_request' }}

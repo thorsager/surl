@@ -44,6 +44,7 @@ jobs:
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
         scanners: 'vuln,secret,config'
+        trivy-config: 'trivy.yaml'
 
     - name: Run Trivy vulnerability scanner (SARIF)
       uses: aquasecurity/trivy-action@0.28.0
@@ -54,6 +55,7 @@ jobs:
         output: 'trivy-results.sarif'
         severity: 'CRITICAL,HIGH'
         scanners: 'vuln,secret,config'
+        trivy-config: 'trivy.yaml'
 
     - name: Upload Trivy results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
@@ -80,4 +82,3 @@ jobs:
             repo: context.repo.repo,
             body: body
           });
-

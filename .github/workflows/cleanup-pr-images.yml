@@ -16,7 +16,7 @@ jobs:
       - name: Delete PR Docker image
         id: delete-image
         run: |
-          PACKAGE_NAME="surl"
+          PACKAGE_NAME="${IMAGE_NAME:-${GITHUB_REPOSITORY##*/}}"
           PR_TAG="pr-${{ github.event.pull_request.number }}"
           OWNER="${{ github.repository_owner }}"
           

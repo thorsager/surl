@@ -15,3 +15,11 @@ surl -d '{"error_code":"-1","message":"dunno"}' \
     -H 'Content-Type: application/json' -s 500 \
     :8080
 ```
+
+```bash
+docker run -p 8080:8080 ghcr.io/thorsager/surl \
+    -H "Location: https://www.google.com" \
+    -s 307 \
+    -d '<html><body><a href="https://www.google.com">google</a></body></html>' \
+    :8080
+```

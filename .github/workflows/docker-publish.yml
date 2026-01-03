@@ -64,11 +64,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
 
       # Build and push Docker image with Buildx
       # https://github.com/docker/build-push-action
@@ -78,10 +76,11 @@ jobs:
         with:
           builder: ${{ steps.buildx.outputs.name }}
           context: .
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64/v8,linux/arm/v6,linux/arm/v7
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64/v8,linux/arm/v6,linux/arm/v7' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -91,7 +90,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          image-ref: ${{ steps.build-and-push.outputs.imageid }}
           format: 'json'
           output: 'trivy-results.json'
           exit-code: '0'
@@ -127,7 +126,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && steps.trivy-check.outputs.has_vulnerabilities == 'true' }}
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          image-ref: ${{ steps.build-and-push.outputs.imageid }}
           format: 'table'
           output: 'trivy-table.txt'
           exit-code: '0'
@@ -140,7 +139,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          image-ref: ${{ steps.build-and-push.outputs.imageid }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
@@ -148,7 +147,7 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security tab
         if: ${{ github.event_name == 'pull_request' }}
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -168,7 +167,7 @@ jobs:
               comment = '✅ Trivy scan passed - No CRITICAL or HIGH vulnerabilities found';
             } else {
               // Detailed message with full table
-              const image = '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}';
+              const image = '${{ steps.build-and-push.outputs.imageid }}';
               comment = `## ⚠️ Trivy Security Scan - Vulnerabilities Detected\n\n`;
               comment += `**Image:** \`${image}\`\n\n`;
               comment += `**Found ${vulnCount} vulnerabilities (CRITICAL/HIGH severity)**\n\n`;

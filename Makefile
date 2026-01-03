@@ -7,7 +7,7 @@ image_tag=$(version)
 .PHONY: all
 all: test build
 
-build: get
+build:
 	go build -v -a -tags netgo --ldflags='-X main.version=$(version)' -o $(binary) ./...
 
 .PHONY: test

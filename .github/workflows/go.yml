@@ -11,9 +11,12 @@ on:
     branches: [ "main" ]
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     steps:
     - uses: actions/checkout@v4
 
@@ -27,3 +30,55 @@ jobs:
 
     - name: Test
       run: make test
+
+    # Scan Go code and dependencies for vulnerabilities with Trivy
+    # https://github.com/aquasecurity/trivy-action
+    - name: Run Trivy vulnerability scanner (filesystem)
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: false
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+        scanners: 'vuln,secret,config'
+        trivy-config: 'trivy.yaml'
+
+    - name: Run Trivy vulnerability scanner (SARIF)
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+        scanners: 'vuln,secret,config'
+        trivy-config: 'trivy.yaml'
+
+    - name: Upload Trivy results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Post Trivy scan results as PR comment
+      if: ${{ github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const comment = `## 🔒 Trivy Security Scan Results (Go Code)\n\n`;
+          let body = comment;
+          body += `**Scan Type:** Filesystem (Go modules, secrets, misconfigurations)\n\n`;
+          body += `<details>\n<summary>Click to view scan details</summary>\n\n`;
+          body += `Scan completed. Check the [Security tab](https://github.com/${{ github.repository }}/security/code-scanning) for detailed results.\n\n`;
+          body += `**Severity Filter:** CRITICAL, HIGH\n`;
+          body += `**Scanners:** Vulnerabilities, Secrets, Misconfigurations\n\n`;
+          body += `</details>`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });

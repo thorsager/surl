@@ -1,0 +1,33 @@
+# Trivy configuration for Docker image and filesystem scanning
+# Suppresses AWS/cloud infrastructure policy errors that don't apply to containers
+
+scan:
+  # Define which scanners to use
+  scanners:
+    - vuln
+    - secret
+    - misconfig
+  
+  # Skip directories that contain policies not applicable to Docker/Go scanning
+  skip-dirs:
+    - "**/policies/cloud/**"
+    - "**/.git"
+    - "**/node_modules"
+  
+  # Number of parallel scanners
+  parallel: 5
+
+# Limit misconfiguration scanning to relevant types only
+misconfiguration:
+  scanners:
+    - dockerfile
+    - kubernetes
+
+# Vulnerability scanning settings
+vulnerability:
+  ignore-unfixed: false
+
+# Severity levels to report
+severity:
+  - CRITICAL
+  - HIGH

@@ -6,8 +6,6 @@ name: Docker
 # documentation.
 
 on:
-  schedule:
-    - cron: '20 1 * * *'
   push:
     branches: [ "main" ]
     # Publish semver tags as releases.
@@ -29,21 +27,13 @@ jobs:
     permissions:
       contents: read
       packages: write
-      # This is used to complete the identity challenge
-      # with sigstore/fulcio when running outside of PRs.
-      id-token: write
+      # Required for Trivy to upload SARIF results and post PR comments
+      security-events: write
+      pull-requests: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Install the cosign tool except on PR
-      # https://github.com/sigstore/cosign-installer
-      - name: Install cosign
-        if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
-        with:
-          cosign-release: 'v2.2.4'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -57,10 +47,9 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
 
-      # Login against a Docker registry except on PR
+      # Login against a Docker registry
       # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -74,8 +63,14 @@ jobs:
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
 
-      # Build and push Docker image with Buildx (don't push on PR)
+      # Build and push Docker image with Buildx
       # https://github.com/docker/build-push-action
       - name: Build and push Docker image
         id: build-and-push
@@ -83,24 +78,62 @@ jobs:
         with:
           builder: ${{ steps.buildx.outputs.name }}
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64/v8,linux/arm/v6,linux/arm/v7
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Sign the resulting Docker image digest except on PRs.
-      # This will only write to the public Rekor transparency log when the Docker
-      # repository is public to avoid leaking data.  If you would like to publish
-      # transparency data even for private images, pass --force to cosign below.
-      # https://github.com/sigstore/cosign
-      - name: Sign the published Docker image
-        if: ${{ github.event_name != 'pull_request' }}
-        env:
-          # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
-          TAGS: ${{ steps.meta.outputs.tags }}
-          DIGEST: ${{ steps.build-and-push.outputs.digest }}
-        # This step uses the identity token to provision an ephemeral certificate
-        # against the sigstore community Fulcio instance.
-        run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+      # Scan Docker image for vulnerabilities with Trivy
+      # https://github.com/aquasecurity/trivy-action
+      - name: Run Trivy vulnerability scanner
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          trivy-config: 'trivy.yaml'
+
+      - name: Run Trivy vulnerability scanner (SARIF)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          trivy-config: 'trivy.yaml'
+
+      - name: Upload Trivy results to GitHub Security tab
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Post Trivy scan results as PR comment
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const image = '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}';
+            
+            let comment = `## 🔒 Trivy Security Scan Results\n\n`;
+            comment += `**Image:** \`${image}\`\n\n`;
+            comment += `<details>\n<summary>Click to view scan details</summary>\n\n`;
+            comment += `Scan completed. Check the [Security tab](https://github.com/${{ github.repository }}/security/code-scanning) for detailed results.\n\n`;
+            comment += `**Severity Filter:** CRITICAL, HIGH\n`;
+            comment += `**Scan Types:** OS packages, Libraries\n\n`;
+            comment += `</details>`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

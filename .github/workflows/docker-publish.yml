@@ -92,8 +92,45 @@ jobs:
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
+          format: 'json'
+          output: 'trivy-results.json'
+          exit-code: '0'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          trivy-config: 'trivy.yaml'
+
+      - name: Check Trivy results
+        id: trivy-check
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('trivy-results.json', 'utf8'));
+            
+            let vulnCount = 0;
+            if (results.Results) {
+              for (const result of results.Results) {
+                if (result.Vulnerabilities) {
+                  vulnCount += result.Vulnerabilities.length;
+                }
+              }
+            }
+            
+            const hasVulnerabilities = vulnCount > 0;
+            core.setOutput('has_vulnerabilities', hasVulnerabilities.toString());
+            core.setOutput('vuln_count', vulnCount.toString());
+            console.log(`Found ${vulnCount} vulnerabilities`);
+
+      - name: Generate Trivy table output
+        if: ${{ github.event_name == 'pull_request' && steps.trivy-check.outputs.has_vulnerabilities == 'true' }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
           format: 'table'
-          exit-code: '1'
+          output: 'trivy-table.txt'
+          exit-code: '0'
           ignore-unfixed: false
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
@@ -121,15 +158,31 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const image = '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}';
+            const hasVulnerabilities = '${{ steps.trivy-check.outputs.has_vulnerabilities }}' === 'true';
+            const vulnCount = '${{ steps.trivy-check.outputs.vuln_count }}';
             
-            let comment = `## 🔒 Trivy Security Scan Results\n\n`;
-            comment += `**Image:** \`${image}\`\n\n`;
-            comment += `<details>\n<summary>Click to view scan details</summary>\n\n`;
-            comment += `Scan completed. Check the [Security tab](https://github.com/${{ github.repository }}/security/code-scanning) for detailed results.\n\n`;
-            comment += `**Severity Filter:** CRITICAL, HIGH\n`;
-            comment += `**Scan Types:** OS packages, Libraries\n\n`;
-            comment += `</details>`;
+            let comment = '';
+            
+            if (!hasVulnerabilities) {
+              // Simple "all is good" message
+              comment = '✅ Trivy scan passed - No CRITICAL or HIGH vulnerabilities found';
+            } else {
+              // Detailed message with full table
+              const image = '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}';
+              comment = `## ⚠️ Trivy Security Scan - Vulnerabilities Detected\n\n`;
+              comment += `**Image:** \`${image}\`\n\n`;
+              comment += `**Found ${vulnCount} vulnerabilities (CRITICAL/HIGH severity)**\n\n`;
+              
+              // Read and include the table output
+              if (fs.existsSync('trivy-table.txt')) {
+                const tableOutput = fs.readFileSync('trivy-table.txt', 'utf8');
+                comment += `<details>\n<summary>Click to view detailed scan results</summary>\n\n`;
+                comment += '```\n' + tableOutput + '\n```\n\n';
+                comment += `</details>\n\n`;
+              }
+              
+              comment += `For more details, check the [Security tab](https://github.com/${{ github.repository }}/security/code-scanning).`;
+            }
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -137,3 +190,9 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
+
+      - name: Fail workflow if vulnerabilities found
+        if: ${{ github.event_name == 'pull_request' && steps.trivy-check.outputs.has_vulnerabilities == 'true' }}
+        run: |
+          echo "❌ Trivy scan failed: Found ${{ steps.trivy-check.outputs.vuln_count }} vulnerabilities"
+          exit 1

@@ -39,14 +39,38 @@ jobs:
         scan-type: 'fs'
         scan-ref: '.'
         format: 'table'
-        exit-code: '1'
+        output: 'trivy-results.txt'
         ignore-unfixed: false
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
         scanners: 'vuln,secret,config'
         trivy-config: 'trivy.yaml'
 
+    - name: Check Trivy scan results
+      id: trivy-check
+      run: |
+        if [ -f trivy-results.txt ]; then
+          # Check if Trivy found any vulnerabilities
+          if grep -q "Total: [1-9]" trivy-results.txt || grep -q "Total: [0-9][0-9]" trivy-results.txt; then
+            echo "has_issues=true" >> $GITHUB_OUTPUT
+            echo "Vulnerabilities found"
+          else
+            echo "has_issues=false" >> $GITHUB_OUTPUT
+            echo "No vulnerabilities found"
+          fi
+          # Save the full output for PR comment
+          {
+            echo 'scan_output<<EOF'
+            cat trivy-results.txt
+            echo EOF
+          } >> $GITHUB_OUTPUT
+        else
+          echo "has_issues=false" >> $GITHUB_OUTPUT
+          echo "Trivy results file not found"
+        fi
+
     - name: Run Trivy vulnerability scanner (SARIF)
+      if: steps.trivy-check.outputs.has_issues == 'true'
       uses: aquasecurity/trivy-action@0.28.0
       with:
         scan-type: 'fs'
@@ -58,27 +82,63 @@ jobs:
         trivy-config: 'trivy.yaml'
 
     - name: Upload Trivy results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v3
+      if: steps.trivy-check.outputs.has_issues == 'true'
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: 'trivy-results.sarif'
 
-    - name: Post Trivy scan results as PR comment
-      if: ${{ github.event_name == 'pull_request' }}
+    - name: Post success comment to PR
+      if: github.event_name == 'pull_request' && steps.trivy-check.outputs.has_issues == 'false'
       uses: actions/github-script@v7
       with:
         script: |
-          const comment = `## 🔒 Trivy Security Scan Results (Go Code)\n\n`;
-          let body = comment;
-          body += `**Scan Type:** Filesystem (Go modules, secrets, misconfigurations)\n\n`;
-          body += `<details>\n<summary>Click to view scan details</summary>\n\n`;
-          body += `Scan completed. Check the [Security tab](https://github.com/${{ github.repository }}/security/code-scanning) for detailed results.\n\n`;
-          body += `**Severity Filter:** CRITICAL, HIGH\n`;
-          body += `**Scanners:** Vulnerabilities, Secrets, Misconfigurations\n\n`;
-          body += `</details>`;
+          const body = `## ✅ Trivy scan completed - no security issues found
 
+          **Scan Type:** Filesystem (Go modules, secrets, misconfigurations)
+          **Severity Filter:** CRITICAL, HIGH
+          **Scanners:** Vulnerabilities, Secrets, Misconfigurations
+          
+          Your code is secure! 🎉`;
+          
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
             body: body
           });
+
+    - name: Post issues found comment to PR
+      if: github.event_name == 'pull_request' && steps.trivy-check.outputs.has_issues == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const scanOutput = `${{ steps.trivy-check.outputs.scan_output }}`;
+          const body = `## 🚨 Trivy Security Scan - Issues Found
+
+          **Security vulnerabilities, secrets, or misconfigurations detected!**
+          
+          **Severity Filter:** CRITICAL, HIGH
+          **Scanners:** Vulnerabilities, Secrets, Misconfigurations
+
+          ### Scan Results
+
+          \`\`\`
+          ${scanOutput}
+          \`\`\`
+
+          ⚠️ **This PR cannot be merged until these issues are resolved.**
+          
+          For more details, check the [Security tab](https://github.com/${{ github.repository }}/security/code-scanning).`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
+
+    - name: Fail job if security issues found
+      if: steps.trivy-check.outputs.has_issues == 'true'
+      run: |
+        echo "Security issues found - failing job to block PR merge"
+        exit 1
